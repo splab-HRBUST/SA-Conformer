@@ -81,7 +81,7 @@ awk 'NR==1{print $2; print $3}' data/vox1_E_trials.txt | xargs -I{} ls -l {}
 
 ### 3) SITW Dev/Eval trials (SITW is FLAC)
 
-SITW is provided in `sitw_database.v4/` and uses `.flac`. This repo supports FLAC via `soundfile`.
+SITW can be requested by emailing sitw_poc@speech.sri.com. This repo supports FLAC via `soundfile`.
 
 Generate project-ready 3-column trials (core-core condition):
 
