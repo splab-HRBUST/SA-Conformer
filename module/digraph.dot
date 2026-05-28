@@ -1,0 +1,140 @@
+digraph G {
+  rankdir=LR;
+  splines=ortho;
+  nodesep=0.45;
+  ranksep=0.75;
+  bgcolor="white";
+
+  graph [fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=12, shape=box, style="rounded,filled", fillcolor="#F7F9FC", color="#1F2937", penwidth=1.2];
+  edge  [fontname="Helvetica", fontsize=11, color="#374151", arrowsize=0.8, penwidth=1.1];
+
+  input   [label="Input\nWaveform → Mel\n[B, 1, F, T]"];
+  convsub [label="Convolution\nSubsampling"];
+  linear  [label="Linear + Dropout"];
+
+  input -> convsub -> linear;
+
+  subgraph cluster_conformer {
+    label="Conformer Encoder (num_blocks = 6)";
+    labelloc="t";
+    fontsize=13;
+    color="#CBD5E1";
+    style="rounded";
+    fillcolor="#FFFFFF";
+    penwidth=1.2;
+
+    c1 [label="Conformer 1"];
+    c2 [label="Conformer 2"];
+    c3 [label="Conformer 3"];
+    c4 [label="Conformer 4"];
+    c5 [label="Conformer 5"];
+    c6 [label="Conformer 6"];
+
+    c1 -> c2 -> c3 -> c4 -> c5 -> c6 [color="#94A3B8"];
+  }
+
+  linear -> c1;
+
+  raw_out [label="Layer outputs {x_i} (raw)\nCollect all blocks\n[B, C, T]", fillcolor="#EEF2FF", color="#4F46E5"];
+  sem_out [label="Layer-balanced outputs {x̂_i}\nLayerNorm + learnable scale\n(semantic branch)\n[B, C, T]", fillcolor="#ECFDF5", color="#059669"];
+
+  c6 -> raw_out [label="tap"];
+  c6 -> sem_out [label="tap"];
+
+  subgraph cluster_baseline {
+    label="Original / Baseline Branch";
+    labelloc="t";
+    fontsize=13;
+    color="#CBD5E1";
+    style="rounded";
+    fillcolor="#FFFFFF";
+    penwidth=1.2;
+
+    concat_all [label="Concat all blocks\ncat({x_i})", fillcolor="#EEF2FF", color="#4F46E5"];
+    pool_o     [label="Attentive Statistics Pooling\n+ BN", fillcolor="#EEF2FF", color="#4F46E5"];
+    orig_out   [label="Baseline Model Output\noriginal_pooled\n[B, 2C·num_blocks]", fillcolor="#EEF2FF", color="#4F46E5"];
+
+    raw_out -> concat_all -> pool_o -> orig_out;
+  }
+
+  subgraph cluster_csem {
+    label="the cross-layer semantic enhancement module";
+    labelloc="t";
+    fontsize=13;
+    color="#DC2626";
+    style="rounded,dashed";
+    penwidth=1.6;
+
+    group   [label="Learnable Semantic Grouping\nsoftmax(logits) over layers\n→ Low / Mid / High\n(weighted sum)", fillcolor="#F0FDFA", color="#0F766E"];
+    low     [label="Low\n(group_low)", fillcolor="#F0FDFA", color="#0F766E"];
+    mid     [label="Mid\n(group_mid)", fillcolor="#F0FDFA", color="#0F766E"];
+    high    [label="High\n(group_high)", fillcolor="#F0FDFA", color="#0F766E"];
+
+    ca12    [label="Cross-Attention Fusion\nLow ⇐ Mid", fillcolor="#FFF7ED", color="#C2410C"];
+    ca23    [label="Cross-Attention Fusion\nMid ⇐ High", fillcolor="#FFF7ED", color="#C2410C"];
+    ca31    [label="Cross-Attention Fusion\nHigh ⇐ Low", fillcolor="#FFF7ED", color="#C2410C"];
+
+    f_low   [label="fused_low", fillcolor="#FFF7ED", color="#C2410C"];
+    f_mid   [label="fused_mid", fillcolor="#FFF7ED", color="#C2410C"];
+    f_high  [label="fused_high", fillcolor="#FFF7ED", color="#C2410C"];
+
+    sem_out -> group;
+    group -> low;
+    group -> mid;
+    group -> high;
+
+    low  -> ca12 -> f_low;
+    mid  -> ca23 -> f_mid;
+    high -> ca31 -> f_high;
+
+    mid  -> ca12 [style=dashed, color="#9A3412"];
+    high -> ca23 [style=dashed, color="#9A3412"];
+    low  -> ca31 [style=dashed, color="#9A3412"];
+  }
+
+  subgraph cluster_esfpn {
+    label="the enhanced semantic feature pyramid module (ES-FPN)";
+    labelloc="t";
+    fontsize=13;
+    color="#DC2626";
+    style="rounded,dashed";
+    penwidth=1.6;
+
+    proj    [label="Semantic Projection\n(EnhancedConv1d 3×1 + 1×1)\nLow/Mid/High → same C", fillcolor="#FDF2F8", color="#BE185D"];
+    msf     [label="Multi-Scale Semantic Fusion\n(additive + multiplicative: Low⊙Mid, Low⊙High)\n(+ optional semantic-aware attention)", fillcolor="#FDF2F8", color="#BE185D"];
+
+    subgraph cluster_refine {
+      label="the semantic feature refinement module";
+      labelloc="t";
+      fontsize=12;
+      color="#DC2626";
+      style="rounded,dashed";
+      penwidth=1.5;
+
+      refine [label="Refinement Conv\n(EnhancedConv1d 3×1 → 3×1 → 1×1)\n+ Residual Add", fillcolor="#FEFCE8", color="#A16207"];
+    }
+
+    sem_feat [label="Semantic Feature Output\nsemantic_feat\n[B, C, T]", fillcolor="#ECFDF5", color="#059669"];
+
+    proj -> msf -> refine -> sem_feat;
+  }
+
+  f_low  -> proj;
+  f_mid  -> proj;
+  f_high -> proj;
+
+  pool_s   [label="Attentive Statistics Pooling\n+ BN", fillcolor="#ECFDF5", color="#059669"];
+  sem_out2 [label="Semantic Feature Output\nsemantic_pooled\n[B, 2C]", fillcolor="#ECFDF5", color="#059669"];
+
+  sem_feat -> pool_s -> sem_out2;
+
+  concat_final [label="Concat\n[original_pooled ; semantic_pooled]", fillcolor="#E0F2FE", color="#0369A1"];
+  fc          [label="Final FC\n→ embedding_dim", fillcolor="#E0F2FE", color="#0369A1"];
+  norm        [label="BN (affine=False)\n+ L2 Normalize", fillcolor="#E0F2FE", color="#0369A1"];
+  out         [label="Speaker Embedding\n[B, embedding_dim]", fillcolor="#E0F2FE", color="#0369A1"];
+
+  orig_out  -> concat_final;
+  sem_out2  -> concat_final;
+  concat_final -> fc -> norm -> out;
+}
